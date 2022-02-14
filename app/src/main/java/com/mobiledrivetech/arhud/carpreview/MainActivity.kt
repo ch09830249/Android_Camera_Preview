@@ -7,8 +7,6 @@ import android.annotation.SuppressLint
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.util.Log
-import android.view.Surface.ROTATION_0
-import android.view.Surface.ROTATION_90
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -18,13 +16,12 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.android.synthetic.main.activity_main.*
 import java.io.File
-import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
-typealias LumaListener = (luma: Double) -> Unit
 
-class MainActivity : AppCompatActivity() {
+
+class MainActivity : AppCompatActivity(), TakePhoto {
 
     private var cameraProviderFuture: ListenableFuture<ProcessCameraProvider>? = null
 
@@ -32,6 +29,9 @@ class MainActivity : AppCompatActivity() {
     private var preview: Preview? = null
     private var imageCapture: ImageCapture? = null
     private var videoCapture: VideoCapture? = null
+
+    // Thread for capturing photos periodically
+    private var capturePhotoThread: TakePhotoThread? = null
 
     private lateinit var outputDirectory: File
     private lateinit var cameraExecutor: ExecutorService
@@ -60,8 +60,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Instantiate the Runnable task and Thread
+        capturePhotoThread = TakePhotoThread (this)
+        capturePhotoThread!!.start()                    // Start this thread
+
         // Set up the listener for "Take photo" button
-        camera_capture_button1.setOnClickListener { takePhoto() }
+        camera_capture_button1.setOnClickListener {
+            if (camera_capture_button1.text == "Take Photo") {
+                camera_capture_button1.text = "Taking"
+                capturePhotoThread!!.mRunning()
+            } else {
+                camera_capture_button1.text = "Take Photo"
+                capturePhotoThread!!.mSuspend()
+            }
+        }
 
         outputDirectory = getOutputDirectory()
 
@@ -99,7 +111,7 @@ class MainActivity : AppCompatActivity() {
             })
     }
 
-    private fun takePhoto() {
+    override fun takePhoto() {
         // Get a stable reference of the modifiable image capture use case
         val imageCapture = imageCapture ?: return
 
@@ -122,8 +134,8 @@ class MainActivity : AppCompatActivity() {
 
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     val savedUri = Uri.fromFile(photoFile)
-                    val msg = "Photo capture succeeded: $savedUri"
-                    Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
+                    val msg = "Photo capture succeeded"
+//                    Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
                     Log.d(TAG, msg)
                 }
             })
@@ -187,11 +199,12 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         cameraExecutor.shutdown()
         videoCapture!!.stopRecording()
+
+        capturePhotoThread!!.mStop()
+        capturePhotoThread = null
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int, permissions: Array<String>, grantResults:
-        IntArray) {
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
             if (allPermissionsGranted()) {
